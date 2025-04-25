@@ -13,10 +13,8 @@ def main():
     # Initialize Supabase client
     supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    # URL to fetch JSON data from PhishTank
-    JSON_URL = "http://data.phishtank.com/data/online-valid.json"
-
     # Fetch JSON data
+    JSON_URL = "http://data.phishtank.com/data/online-valid.json"
     try:
         response = requests.get(JSON_URL)
         response.raise_for_status()
