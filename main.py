@@ -1,3 +1,4 @@
+import time
 import asyncio
 import requests
 from typing import List, Dict
@@ -41,13 +42,25 @@ async def fetch_multiple_urls(urls: List[str]) -> List[Dict[str, str]]:
 
 async def main():
     JSON_URL = "http://data.phishtank.com/data/online-valid.json"
-    try:
-        response = requests.get(JSON_URL)
-        response.raise_for_status()
-        data = response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from {JSON_URL}: {e}")
-        return None
+    max_retries = 3
+    retry_delay = 120
+
+    # Fetch data from PhishTank
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1} of {max_retries} to fetch data...")
+            response = requests.get(JSON_URL)
+            response.raise_for_status()
+            data = response.json()
+            break
+        except RequestException as e:
+            print(f"Error fetching data (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                print(f"Waiting {retry_delay} seconds before retry...")
+                time.sleep(retry_delay)
+            else:
+                print("Max retries reached. Exiting.")
+                return None
 
     # Convert JSON data to DataFrame
     phish_df = pd.DataFrame(data)
