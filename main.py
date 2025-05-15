@@ -1,6 +1,7 @@
 import time
 import asyncio
 import requests
+from requests.exceptions import RequestException
 from typing import List, Dict
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
