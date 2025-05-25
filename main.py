@@ -44,7 +44,7 @@ async def fetch_multiple_urls(urls: List[str]) -> List[Dict[str, str]]:
 async def main():
     JSON_URL = "http://data.phishtank.com/data/online-valid.json"
     max_retries = 5
-    retry_delay = 300
+    retry_delay = 600
 
     # Fetch data from PhishTank
     for attempt in range(max_retries):
