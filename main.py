@@ -66,10 +66,10 @@ async def main():
     # Convert JSON data to DataFrame
     phish_df = pd.DataFrame(data)
 
-    # Filter for sites verified yesterday
-    yesterday_date = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # Filter for sites verified today
+    today_date = datetime.utcnow().strftime('%Y-%m-%d')
     phish_df['verification_date'] = phish_df['verification_time'].str.split('T').str[0]
-    phish_df = phish_df.loc[phish_df['verification_date'] == yesterday_date]
+    phish_df = phish_df.loc[phish_df['verification_date'] == today_date]
     phish_df = phish_df.loc[phish_df['verified'] == "yes"]
     phish_df = phish_df.loc[phish_df['online'] == "yes"]
     phish_df = phish_df[['url', 'verification_time', 'target']].reset_index(drop=True)
