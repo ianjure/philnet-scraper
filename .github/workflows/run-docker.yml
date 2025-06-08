@@ -1,6 +1,7 @@
 name: PhishTank to Supabase
 
 on:
+  workflow_dispatch:
   schedule:
     # Runs every day at 23:00 UTC (7:00 AM PH)
     - cron: '0 23 * * *'
