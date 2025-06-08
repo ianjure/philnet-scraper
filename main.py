@@ -1,108 +1,129 @@
+import os
+import sys
 import time
 import asyncio
 import requests
-from requests.exceptions import RequestException
+import traceback
+import pandas as pd
+from asyncio import Semaphore
 from typing import List, Dict
-from datetime import datetime, timedelta
+from datetime import datetime
+from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
-import os
-import pandas as pd
-from supabase import create_client, Client
+# ----- CONFIGURATION ----- #
+JSON_URL = "http://data.phishtank.com/data/online-valid.json"
+max_retries = 5 
+retry_delay = 600
+sem = Semaphore(5)
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+TABLE_NAME = "phish_data"
 
 # ----- HELPER FUNCTIONS ----- #
 
-async def fetch_html(url: str) -> str:
+async def fetch_html(context, url: str) -> str:
     """Fetch HTML content using async Playwright"""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-
+    async with sem:
         try:
-            # Set timeout and navigate to page
-            page.set_default_timeout(15000)
-            await page.goto(url, wait_until="domcontentloaded")
-
-            # Wait for page to settle
-            await asyncio.sleep(2)
-
-            # Get the HTML content
+            page = await context.new_page()
+            await page.goto(url, wait_until="networkidle", timeout=20000)
             html = await page.content()
+            await page.close()
             return html
-        except:
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
             return None
-        finally:
-            await browser.close()
 
-async def fetch_multiple_urls(urls: List[str]) -> List[Dict[str, str]]:
+async def fetch_multiple_urls(playwright, urls: List[str]) -> List[str]:
     """Fetch multiple URLs concurrently"""
-    tasks = [fetch_html(url) for url in urls]
-    return await asyncio.gather(*tasks)
+    browser = await playwright.chromium.launch(headless=True)
+    context = await browser.new_context()
+    try:
+        tasks = [fetch_html(context, url) for url in urls]
+        return await asyncio.gather(*tasks)
+    finally:
+        await browser.close()
 
-# ----- MAIN ----- #
+# ----- MAIN FUNCTION ----- #
 
 async def main():
-    JSON_URL = "http://data.phishtank.com/data/online-valid.json"
-    max_retries = 5
-    retry_delay = 600
-
-    # Fetch data from PhishTank
+    # Fetch JSON data
     for attempt in range(max_retries):
         try:
             print(f"Attempt {attempt + 1} of {max_retries} to fetch data...")
-            response = requests.get(JSON_URL)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/114.0.0.0 Safari/537.36"
+                )
+            }
+            response = requests.get(JSON_URL, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
+            print("Successfully fetched JSON.")
             break
-        except RequestException as e:
+        except Exception as e:
             print(f"Error fetching data (attempt {attempt + 1}): {e}")
+            traceback.print_exc()
             if attempt < max_retries - 1:
                 print(f"Waiting {retry_delay} seconds before retry...")
                 time.sleep(retry_delay)
             else:
                 print("Max retries reached. Exiting.")
-                return None
+                traceback.print_exc()
+                sys.exit(1)
 
-    # Convert JSON data to DataFrame
+    # Convert to DataFrame
     phish_df = pd.DataFrame(data)
+    if phish_df.empty:
+        print("JSON fetched, but no phishing data returned.")
+        sys.exit(0)
 
-    # Filter for sites verified today
+    # Filter today's verified phishing sites
     today_date = datetime.utcnow().strftime('%Y-%m-%d')
-    phish_df['verification_date'] = phish_df['verification_time'].str.split('T').str[0]
-    phish_df = phish_df.loc[phish_df['verification_date'] == today_date]
-    phish_df = phish_df.loc[phish_df['verified'] == "yes"]
-    phish_df = phish_df.loc[phish_df['online'] == "yes"]
-    phish_df = phish_df[['url', 'verification_time', 'target']].reset_index(drop=True)
+    phish_df['verification_date'] = phish_df['verification_time'].astype(str).str.split('T').str[0]
+    phish_df = phish_df[
+        (phish_df['verification_date'] == today_date) &
+        (phish_df['verified'] == "yes") &
+        (phish_df['online'] == "yes")
+    ][['url', 'verification_time', 'target']].reset_index(drop=True)
 
-    # Fetch HTML content asynchronously
-    phish_df = phish_df.head(100)
+    # Fetch HTML content
+    print("Starting to fetch HTML content for phishing URLs...")
     urls = phish_df['url'].tolist()
-    html_contents = await fetch_multiple_urls(urls)
+    async with async_playwright() as p:
+        html_contents = await fetch_multiple_urls(p, urls)
+    print(f"Fetched HTML content for {len(html_contents)} URLs.")
 
     # Add results to DataFrame
     phish_df['html_content'] = html_contents
+    phish_df['html_length'] = phish_df['html_content'].str.len().fillna(0).astype(int)
     phish_df['fetch_status'] = phish_df['html_content'].apply(lambda x: "success" if x else "failed")
     phish_df['fetched_date'] = datetime.utcnow().strftime('%Y-%m-%d')
 
-    # Filter for rows with HTML
-    phish_df = phish_df.loc[phish_df['fetch_status'] == "success"]
-    phish_df = phish_df.loc[phish_df['html_content'] != "<html><head></head><body></body></html>"]
-
-    # Select columns for database
-    output_df = phish_df[['url', 'html_content', 'target', 'verification_time', 'fetched_date']].reset_index(drop=True)
-
-    # Configuration
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-    TABLE_NAME = "daily_phish"
-
-    # Initialize Supabase client
-    supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # Filter out invalid HTML
+    phish_df = phish_df[
+        (phish_df['fetch_status'] == "success") &
+        (phish_df['html_content'] != "<html><head></head><body></body></html>") &
+        (phish_df['html_length'] > 1000)
+    ]
+    print(f"Filtered to {len(phish_df)} valid phishing records.")
 
     # Upload to Supabase
+    output_df = phish_df[['url', 'html_content', 'html_length', 'verification_time', 'fetched_date']]
+    supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     records = output_df.to_dict("records")
-    response = supabase_client.table(TABLE_NAME).insert(records).execute()
-    print(f"Successfully uploaded {len(response.data)} records!")
+    if records:
+        response = supabase_client.table(TABLE_NAME).insert(records).execute()
+        print(f"Successfully uploaded {len(response.data)} records!")
+    else:
+        print("No valid phishing records to upload today.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"Unhandled error: {e}")
