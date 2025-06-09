@@ -12,7 +12,6 @@ from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
 # ----- CONFIGURATION ----- #
-
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
 max_retries = 5 
 retry_delay = 600
@@ -20,6 +19,7 @@ sem = Semaphore(5)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "phish_data"
 
 # ----- HELPER FUNCTIONS ----- #
@@ -53,7 +53,7 @@ async def main():
     # Fetch JSON data
     for attempt in range(max_retries):
         try:
-            print(f"Attempt {attempt + 1} of {max_retries} to fetch data...")
+            print(f"Attempt {attempt + 1} of {max_retries} to fetch data...", flush=True)
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -64,23 +64,23 @@ async def main():
             response = requests.get(JSON_URL, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
-            print("Successfully fetched JSON.")
+            print("Successfully fetched JSON.", flush=True)
             break
         except Exception as e:
-            print(f"Error fetching data (attempt {attempt + 1}): {e}")
+            print(f"Error fetching data (attempt {attempt + 1}): {e}", flush=True)
             traceback.print_exc()
             if attempt < max_retries - 1:
-                print(f"Waiting {retry_delay} seconds before retry...")
+                print(f"Waiting {retry_delay} seconds before retry...", flush=True)
                 time.sleep(retry_delay)
             else:
-                print("Max retries reached. Exiting.")
+                print("Max retries reached. Exiting.", flush=True)
                 traceback.print_exc()
                 sys.exit(1)
 
     # Convert to DataFrame
     phish_df = pd.DataFrame(data)
     if phish_df.empty:
-        print("JSON fetched, but no phishing data returned.")
+        print("JSON fetched, but no phishing data returned.", flush=True)
         sys.exit(0)
 
     # Filter today's verified phishing sites
@@ -91,13 +91,15 @@ async def main():
         (phish_df['verified'] == "yes") &
         (phish_df['online'] == "yes")
     ][['url', 'verification_time', 'target']].reset_index(drop=True)
+    if phish_df.empty:
+        print("DataFrame filtered, but no phishing data returned.", flush=True)
+        sys.exit(0)
 
     # Fetch HTML content
-    print("Starting to fetch HTML content for phishing URLs...")
     urls = phish_df['url'].tolist()
     async with async_playwright() as p:
         html_contents = await fetch_multiple_urls(p, urls)
-    print(f"Fetched HTML content for {len(html_contents)} URLs.")
+    print(f"Fetched HTML content for {len(html_contents)} URLs.", flush=True)
 
     # Add results to DataFrame
     phish_df['html_content'] = html_contents
@@ -111,20 +113,19 @@ async def main():
         (phish_df['html_content'] != "<html><head></head><body></body></html>") &
         (phish_df['html_length'] > 1000)
     ]
-    print(f"Filtered to {len(phish_df)} valid phishing records.")
+    print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
     # Upload to Supabase
     output_df = phish_df[['url', 'html_content', 'html_length', 'verification_time', 'fetched_date']]
-    supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     records = output_df.to_dict("records")
     if records:
         response = supabase_client.table(TABLE_NAME).insert(records).execute()
-        print(f"Successfully uploaded {len(response.data)} records!")
+        print(f"Successfully uploaded {len(response.data)} records!", flush=True)
     else:
-        print("No valid phishing records to upload today.")
+        print("No valid phishing records to upload today.", flush=True)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"Unhandled error: {e}")
+        print(f"Unhandled error: {e}", flush=True)
