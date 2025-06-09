@@ -12,6 +12,7 @@ from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
 # ----- CONFIGURATION ----- #
+
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
 max_retries = 5 
 retry_delay = 600
