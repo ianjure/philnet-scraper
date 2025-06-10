@@ -112,7 +112,7 @@ async def main():
     phish_df = phish_df[
         (phish_df['fetch_status'] == "success") &
         (phish_df['html_content'] != "<html><head></head><body></body></html>") &
-        (phish_df['html_length'] > 1000)
+        (phish_df['html_length'] > 5000)
     ]
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
