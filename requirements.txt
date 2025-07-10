@@ -1,5 +1,5 @@
 pandas
 requests
-supabase
 playwright
 beautifulsoup4
+supabase
