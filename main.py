@@ -1,19 +1,22 @@
 import os
+
+import asyncio
+from asyncio import Semaphore
+from playwright.async_api import async_playwright
+
 import sys
 import time
-import asyncio
 import requests
 import traceback
 import pandas as pd
-from asyncio import Semaphore
 from typing import List, Dict
-from datetime import datetime
-from supabase import create_client, Client
-from playwright.async_api import async_playwright
 
+from datetime import datetime
 from bs4 import BeautifulSoup
-import re
 from urllib.parse import urlparse
+import re
+
+from supabase import create_client, Client
 
 # ----- CONFIGURATION ----- #
 
@@ -24,7 +27,7 @@ sem = Semaphore(5)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TABLE_NAME = "scraped_phishing_data"
+TABLE_NAME = "scraped_data"
 
 # ----- HELPER FUNCTIONS ----- #
 
