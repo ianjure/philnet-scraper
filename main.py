@@ -24,7 +24,7 @@ sem = Semaphore(5)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TABLE_NAME = "phish_scraper_data"
+TABLE_NAME = "scraped_phishing_data"
 
 # ----- HELPER FUNCTIONS ----- #
 
@@ -221,7 +221,7 @@ async def main():
     phish_df = phish_df[
         (phish_df['fetch_status'] == "success") & # Successfully fetched sites
         (phish_df['html_content'] != "<html><head></head><body></body></html>") & # Empty sites
-        (phish_df['html_length'] > 5000) # Sites with enough content
+        (phish_df['html_length'] > 6000) # Sites with enough content
     ]
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
@@ -231,7 +231,7 @@ async def main():
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
     
     # Upload to Supabase
-    output_df = phish_df[['url', 'html_content', 'html_length', 'verification_time', 'fetched_date']]
+    output_df = phish_df.drop(columns=['url', 'html_content', 'html_length', 'verification_time', 'verified', 'online', 'fetch_status'])
     records = output_df.to_dict("records")
     if records:
         supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
