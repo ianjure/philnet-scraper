@@ -20,7 +20,7 @@ sem = Semaphore(5)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TABLE_NAME = "phish_data"
+TABLE_NAME = "phish_scraper_data"
 
 # ----- HELPER FUNCTIONS ----- #
 
