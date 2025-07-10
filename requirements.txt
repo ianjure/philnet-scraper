@@ -1,5 +1,5 @@
-pandas
 requests
 playwright
+pandas
 beautifulsoup4
 supabase
