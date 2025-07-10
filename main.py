@@ -115,6 +115,8 @@ async def main():
     ]
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
+    # Extract the features
+
     # Upload to Supabase
     output_df = phish_df[['url', 'html_content', 'html_length', 'verification_time', 'fetched_date']]
     records = output_df.to_dict("records")
