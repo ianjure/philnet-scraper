@@ -229,12 +229,13 @@ async def main():
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
     # Extract the features
+    phish_df = phish_df[['url', 'html_content', 'fetched_date']]
     phish_df['visible_text'] = phish_df['html_content'].apply(extract_text)
     heuristic_features = phish_df.apply(extract_heuristic, axis=1)
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
     
     # Upload to Supabase
-    output_df = phish_df.drop(columns=['url', 'html_content', 'html_length', 'verification_time', 'verified', 'online', 'fetch_status'])
+    output_df = phish_df.drop(columns=['url', 'html_content'])
     records = output_df.to_dict("records")
     if records:
         supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
