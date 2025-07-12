@@ -1,4 +1,4 @@
-name: PhishTank to Supabase
+name: PhishTank to Supabase (PhiLNet Scraper)
 
 on:
   workflow_dispatch: # Manual trigger
