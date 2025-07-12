@@ -218,7 +218,7 @@ async def main():
     phish_df['html_content'] = html_contents
     phish_df['html_length'] = phish_df['html_content'].str.len().fillna(0).astype(int)
     phish_df['fetch_status'] = phish_df['html_content'].apply(lambda x: "success" if x else "failed")
-    phish_df['fetched_date'] = datetime.utcnow().strftime('%Y-%m-%d')
+    phish_df['fetch_date'] = datetime.utcnow().strftime('%Y-%m-%d')
 
     # Filter out invalid sites
     phish_df = phish_df[
@@ -229,7 +229,7 @@ async def main():
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
     # Extract the features
-    phish_df = phish_df[['url', 'html_content', 'fetched_date']]
+    phish_df = phish_df[['url', 'html_content', 'fetch_date']]
     phish_df['visible_text'] = phish_df['html_content'].apply(extract_text)
     heuristic_features = phish_df.apply(extract_heuristic, axis=1)
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
