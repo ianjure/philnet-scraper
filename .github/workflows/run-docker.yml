@@ -17,4 +17,4 @@ jobs:
         run: docker pull ianjure/philnet-scraper:latest
 
       - name: Run Docker container
-        run: docker run --rm -e SUPABASE_URL=${{ secrets.SUPABASE_URL }} -e SUPABASE_KEY=${{ secrets.SUPABASE_KEY }} ianjure/phish-scraper:latest
+        run: docker run --rm -e SUPABASE_URL=${{ secrets.SUPABASE_URL }} -e SUPABASE_KEY=${{ secrets.SUPABASE_KEY }} ianjure/philnet-scraper:latest
