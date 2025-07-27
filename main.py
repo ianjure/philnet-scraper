@@ -1,62 +1,41 @@
 import os
-
-import asyncio
-from asyncio import Semaphore
-from playwright.async_api import async_playwright
-
 import sys
 import time
 import requests
 import traceback
 import pandas as pd
 from typing import List, Dict
-
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import re
-
-from supabase import create_client, Client
 
 # ----- CONFIGURATION ----- #
 
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
 max_retries = 5 
 retry_delay = 600
-sem = Semaphore(5)
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-TABLE_NAME = "scraped_data"
 
 # ----- HELPER FUNCTIONS ----- #
 
-async def fetch_html(context, url: str) -> str:
+def fetch_html(url: str) -> str:
     """
-    Fetch HTML content using async Playwright
+    Fetch HTML content using requests
     """
-    async with sem:
-        try:
-            page = await context.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=20000)
-            html = await page.content()
-            await page.close()
-            return html
-        except Exception as e:
-            print(f"Error fetching {url}: {e}")
-            return None
-
-async def fetch_multiple_urls(playwright, urls: List[str]) -> List[str]:
-    """
-    Fetch multiple URLs concurrently
-    """
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context()
     try:
-        tasks = [fetch_html(context, url) for url in urls]
-        return await asyncio.gather(*tasks)
-    finally:
-        await browser.close()
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/114.0.0.0 Safari/537.36"
+            )
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return None
 
 def extract_text(html):
     """
@@ -139,30 +118,12 @@ def extract_heuristic(row):
             'num_external_domains': len(external_domains),
         })
     else:
-        features.update({
-            'num_forms': 0,
-            'num_inputs': 0,
-            'num_links': 0,
-            'num_password_inputs': 0,
-            'num_hidden_inputs': 0,
-            'num_onclick_events': 0,
-            'num_hidden_elements': 0,
-            'has_iframe': False,
-            'has_zero_sized_iframe': False,
-            'suspicious_form_action': False,
-            'has_script_eval': False,
-            'has_network_js': False,
-            'has_base64_in_js': False,
-            'num_inline_scripts': 0,
-            'external_js_count': 0,
-            'external_iframe_count': 0,
-            'num_external_domains': 0,
-        })
+        features.update({key: 0 if isinstance(val, int) else False for key, val in features.items()})
     return pd.Series(features)
 
 # ----- MAIN FUNCTION ----- #
 
-async def main():
+def main():
     # Fetch JSON data
     for attempt in range(max_retries):
         try:
@@ -187,7 +148,6 @@ async def main():
                 time.sleep(retry_delay)
             else:
                 print("Max retries reached. Exiting.", flush=True)
-                traceback.print_exc()
                 sys.exit(1)
 
     # Convert to DataFrame
@@ -209,12 +169,7 @@ async def main():
         sys.exit(0)
 
     # Fetch HTML content
-    urls = phish_df['url'].tolist()
-    async with async_playwright() as p:
-        html_contents = await fetch_multiple_urls(p, urls)
-    print(f"Fetched HTML content for {len(html_contents)} URLs.", flush=True)
-
-    # Add results to DataFrame
+    html_contents = [fetch_html(url) for url in phish_df['url']]
     phish_df['html_content'] = html_contents
     phish_df['html_length'] = phish_df['html_content'].str.len().fillna(0).astype(int)
     phish_df['fetch_status'] = phish_df['html_content'].apply(lambda x: "success" if x else "failed")
@@ -222,9 +177,9 @@ async def main():
 
     # Filter out invalid sites
     phish_df = phish_df[
-        (phish_df['fetch_status'] == "success") & # Successfully fetched sites
-        (phish_df['html_content'] != "<html><head></head><body></body></html>") & # Empty sites
-        (phish_df['html_length'] > 6000) # Sites with enough content
+        (phish_df['fetch_status'] == "success") &
+        (phish_df['html_content'] != "<html><head></head><body></body></html>") &
+        (phish_df['html_length'] > 6000)
     ]
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
@@ -234,18 +189,13 @@ async def main():
     heuristic_features = phish_df.apply(extract_heuristic, axis=1)
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
     
-    # Upload to Supabase
-    output_df = phish_df.drop(columns=['url', 'html_content'])
-    records = output_df.to_dict("records")
-    if records:
-        supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        response = supabase_client.table(TABLE_NAME).insert(records).execute()
-        print(f"Successfully uploaded {len(response.data)} records!", flush=True)
-    else:
-        print("No valid phishing records to upload today.", flush=True)
+    # Save locally as CSV
+    output_file = f"phish_data_{today_date}.csv"
+    phish_df.to_csv(output_file, index=False)
+    print(f"Saved {len(phish_df)} phishing records to {output_file}.")
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except Exception as e:
         print(f"Unhandled error: {e}", flush=True)
