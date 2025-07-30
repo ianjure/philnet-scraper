@@ -2,6 +2,9 @@ import os
 import sys
 import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+
 import traceback
 import pandas as pd
 from typing import List, Dict
@@ -10,37 +13,45 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import re
 
-# ----- CONFIGURATION ----- #
+from huggingface_hub import hf_hub_download, login, HfApi, upload_file
 
+# Initialize data fetching configuration variables
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
-max_retries = 5 
+max_retries = 5
 retry_delay = 600
 
-# ----- HELPER FUNCTIONS ----- #
+# Initialize Hugging Face repository variables
+repo_id = "ianjure/philnet"
+parquet_file = "legit.parquet"
+token = os.getenv("HUGGINGFACE_TOKEN")
 
+# List of common User-Agent strings to rotate
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+]
+
+# Function: Fetch HTML from URL
 def fetch_html(url: str) -> str:
-    """
-    Fetch HTML content using requests
-    """
     try:
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/114.0.0.0 Safari/537.36"
-            )
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
         }
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         return response.text
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching URL: {e}")
         return None
 
-def extract_text(html):
-    """
-    Extract textual features from HTML content
-    """
+# Function: Extract textual features
+def extract_texts(html):
     if html is None:
         return ""
     soup = BeautifulSoup(html, "html.parser")
@@ -48,14 +59,13 @@ def extract_text(html):
         script.decompose()
     return soup.get_text(separator=" ", strip=True)
 
+# Function: Extract heurisitic features
 def extract_heuristic(row):
-    """
-    Extract heuristic features from URL and HTML content
-    """
     url = row['url']
     html = row['html_content']
     parsed = urlparse(url)
     domain = parsed.netloc
+    
     features = {
         'url_length': len(url),
         'num_dots': url.count('.'),
@@ -70,6 +80,7 @@ def extract_heuristic(row):
         'url_has_long_query': len(parsed.query) > 100,
         'url_ends_with_exe': url.lower().endswith('.exe'),
     }
+    
     if html:
         soup = BeautifulSoup(html, 'html.parser')
         external_domains = set()
@@ -84,6 +95,7 @@ def extract_heuristic(row):
         script_tags = soup.find_all('script')
         inline_scripts = [s for s in script_tags if not s.get('src')]
         base64_matches = re.findall(r'base64,[A-Za-z0-9+/=]+', html)
+        
         features.update({
             'num_forms': len(soup.find_all('form')),
             'num_inputs': len(soup.find_all('input')),
@@ -93,35 +105,20 @@ def extract_heuristic(row):
             'num_onclick_events': len(soup.find_all(onclick=True)),
             'num_hidden_elements': len(soup.select('[style*="display:none"], [style*="visibility:hidden"]')),
             'has_iframe': bool(soup.find('iframe')),
-            'has_zero_sized_iframe': any(
-                iframe.get('width') in ['0', '1'] or iframe.get('height') in ['0', '1']
-                for iframe in soup.find_all('iframe')
-            ),
-            'suspicious_form_action': any(
-                form.get('action') and urlparse(form.get('action')).netloc not in ['', domain]
-                for form in soup.find_all('form')
-            ),
-        })
-        features.update({
+            'has_zero_sized_iframe': any(iframe.get('width') in ['0', '1'] or iframe.get('height') in ['0', '1'] for iframe in soup.find_all('iframe')),
+            'suspicious_form_action': any(form.get('action') and urlparse(form.get('action')).netloc not in ['', domain] for form in soup.find_all('form')),
             'has_script_eval': 'eval(' in html,
             'has_network_js': has_network_js,
             'has_base64_in_js': len(base64_matches) > 0,
             'num_inline_scripts': len(inline_scripts),
-            'external_js_count': len([
-                tag for tag in script_tags
-                if tag.get('src') and urlparse(tag.get('src')).netloc != domain
-            ]),
-            'external_iframe_count': len([
-                tag for tag in soup.find_all('iframe')
-                if tag.get('src') and urlparse(tag.get('src')).netloc != domain
-            ]),
+            'external_js_count': len([tag for tag in script_tags if tag.get('src') and urlparse(tag.get('src')).netloc != domain]),
+            'external_iframe_count': len([tag for tag in soup.find_all('iframe') if tag.get('src') and urlparse(tag.get('src')).netloc != domain]),
             'num_external_domains': len(external_domains),
         })
     else:
         features.update({key: 0 if isinstance(val, int) else False for key, val in features.items()})
     return pd.Series(features)
 
-# ----- MAIN FUNCTION ----- #
 
 def main():
     # Fetch JSON data
@@ -184,15 +181,51 @@ def main():
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
     # Extract the features
-    phish_df = phish_df[['url', 'html_content', 'fetch_date']]
+    phish_df = phish_df[['url', 'html_content']]
     phish_df['visible_text'] = phish_df['html_content'].apply(extract_text)
     heuristic_features = phish_df.apply(extract_heuristic, axis=1)
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
+
+    # Save as parquet file
+    phish_df['result'] = 1
+    phish_df = phish_df.drop(columns="html_content")
+    output_file = "new_phish.parquet"
     
-    # Save locally as CSV
-    output_file = f"phish_data_{today_date}.csv"
-    phish_df.to_csv(output_file, index=False)
-    print(f"Saved {len(phish_df)} phishing records to {output_file}.")
+    for col in phish_df.select_dtypes(include=['object', 'string']):
+        phish_df[col] = phish_df[col].astype(str).str.encode('utf-8', 'ignore').str.decode('utf-8')
+
+    phish_df.to_parquet(output_file, engine="pyarrow", index=False)
+    print(f"Saved {len(phish_df)} legit records to {output_file}.")
+
+    # Save to database
+    try:
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=parquet_file,
+            repo_type="dataset"
+        )
+        print(f"Downloaded {parquet_file} to: {local_path}", flush=True)
+        df_existing = pd.read_parquet(local_path)
+        print(f"Loaded {len(df_existing)} existing records.", flush=True)
+    except Exception:
+        print("No existing Parquet found. Creating a new one.", flush=True)
+        df_existing = pd.DataFrame()
+        
+    df_combined = pd.concat([df_existing, phish_df], ignore_index=True)
+    print(f"Combined total records: {len(df_combined)}", flush=True)
+
+    df_combined.to_parquet(parquet_file, engine="pyarrow", index=False)
+    print(f"Saved updated dataset to {parquet_file}", flush=True)
+
+    login(token=token)
+    api = HfApi()
+    upload_file(
+        path_or_fileobj=parquet_file,
+        path_in_repo=parquet_file,
+        repo_id=repo_id,
+        repo_type="dataset"
+    )
+    print("Parquet file updated successfully!", flush=True)
 
 if __name__ == "__main__":
     try:
