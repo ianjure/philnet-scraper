@@ -1,8 +1,8 @@
 import os
 import sys
 import time
-import requests
 import random
+import requests
 
 import traceback
 import pandas as pd
