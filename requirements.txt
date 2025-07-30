@@ -2,3 +2,5 @@ requests
 pandas
 beautifulsoup4
 huggingface-hub
+pyarrow
+lxml
