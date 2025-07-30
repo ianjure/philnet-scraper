@@ -2,8 +2,6 @@ import os
 import sys
 import time
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 
 import traceback
 import pandas as pd
