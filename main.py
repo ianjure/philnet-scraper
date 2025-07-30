@@ -229,6 +229,7 @@ def main():
         df_existing = pd.DataFrame()
         
     df_combined = pd.concat([df_existing, phish_df], ignore_index=True)
+    df_combined.drop_duplicates(inplace=True)
     print(f"Combined total records: {len(df_combined)}", flush=True)
 
     df_combined.to_parquet(parquet_file, engine="pyarrow", index=False)
