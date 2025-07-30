@@ -59,7 +59,7 @@ def extract_texts(html):
     return soup.get_text(separator=" ", strip=True)
 
 # Function: Extract heurisitic features
-def extract_heuristic(row):
+def extract_heuristics(row):
     url = row['url']
     html = row['html_content']
     parsed = urlparse(url)
@@ -115,7 +115,25 @@ def extract_heuristic(row):
             'num_external_domains': len(external_domains),
         })
     else:
-        features.update({key: 0 if isinstance(val, int) else False for key, val in features.items()})
+        features.update({
+            'num_forms': 0,
+            'num_inputs': 0,
+            'num_links': 0,
+            'num_password_inputs': 0,
+            'num_hidden_inputs': 0,
+            'num_onclick_events': 0,
+            'num_hidden_elements': 0,
+            'has_iframe': False,
+            'has_zero_sized_iframe': False,
+            'suspicious_form_action': False,
+            'has_script_eval': False,
+            'has_network_js': False,
+            'has_base64_in_js': False,
+            'num_inline_scripts': 0,
+            'external_js_count': 0,
+            'external_iframe_count': 0,
+            'num_external_domains': 0,
+        })
     return pd.Series(features)
 
 
@@ -181,8 +199,8 @@ def main():
 
     # Extract the features
     phish_df = phish_df[['url', 'html_content']]
-    phish_df['visible_text'] = phish_df['html_content'].apply(extract_text)
-    heuristic_features = phish_df.apply(extract_heuristic, axis=1)
+    phish_df['visible_text'] = phish_df['html_content'].apply(extract_texts)
+    heuristic_features = phish_df.apply(extract_heuristics, axis=1)
     phish_df = pd.concat([phish_df, heuristic_features], axis=1)
 
     # Save as parquet file
