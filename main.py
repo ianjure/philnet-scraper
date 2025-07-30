@@ -53,7 +53,7 @@ def fetch_html(url: str) -> str:
 def extract_texts(html):
     if html is None:
         return ""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
     for script in soup(["script", "style"]):
         script.decompose()
     return soup.get_text(separator=" ", strip=True)
