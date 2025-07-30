@@ -53,7 +53,7 @@ def fetch_html(url: str) -> str:
 def extract_texts(html):
     if html is None:
         return ""
-    soup = BeautifulSoup(html, 'lxml')
+    soup = BeautifulSoup(html, "lxml")
     for script in soup(["script", "style"]):
         script.decompose()
     return soup.get_text(separator=" ", strip=True)
@@ -81,7 +81,7 @@ def extract_heuristics(row):
     }
     
     if html:
-        soup = BeautifulSoup(html, 'lxml')
+        soup = BeautifulSoup(html, "lxml")
         external_domains = set()
         for tag in soup.find_all(['script', 'link', 'img', 'iframe']):
             src = tag.get('src') or tag.get('href')
