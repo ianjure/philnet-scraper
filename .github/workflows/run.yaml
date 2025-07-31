@@ -1,0 +1,20 @@
+name: PhiLNet - Phishing Scraper
+
+on:
+  workflow_dispatch: # Manual trigger
+  schedule:
+    - cron: '0 23 * * *' # Runs every day at 23:00 UTC (7:00AM PH Time)
+    
+jobs:
+  run-docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Pull Docker image
+        run: docker pull ianjure/philnet-scraper:latest
+
+      - name: Run Docker container
+        run: docker run --rm -e HUGGINGFACE_TOKEN=${{ secrets.HUGGINGFACE_TOKEN }} ianjure/philnet-scraper:latest
