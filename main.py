@@ -6,13 +6,12 @@ import requests
 
 import traceback
 import pandas as pd
-from typing import List, Dict
 from datetime import datetime
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import re
 
-from huggingface_hub import hf_hub_download, login, HfApi, upload_file
+from huggingface_hub import hf_hub_download, login, upload_file
 
 # Initialize data fetching configuration variables
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
@@ -21,7 +20,7 @@ retry_delay = 600
 
 # Initialize Hugging Face repository variables
 repo_id = "ianjure/philnet"
-parquet_file = "legit.parquet"
+parquet_file = "phish.parquet"
 token = os.getenv("HUGGINGFACE_TOKEN")
 
 # List of common User-Agent strings to rotate
@@ -206,13 +205,13 @@ def main():
     # Save as parquet file
     phish_df['result'] = 1
     phish_df = phish_df.drop(columns="html_content")
-    output_file = "new_phish.parquet"
     
     for col in phish_df.select_dtypes(include=['object', 'string']):
         phish_df[col] = phish_df[col].astype(str).str.encode('utf-8', 'ignore').str.decode('utf-8')
 
+    output_file = "new_phish.parquet"
     phish_df.to_parquet(output_file, engine="pyarrow", index=False)
-    print(f"Saved {len(phish_df)} legit records to {output_file}.")
+    print(f"Saved {len(phish_df)} phishing records to {output_file}.")
 
     # Save to database
     try:
@@ -221,7 +220,7 @@ def main():
             filename=parquet_file,
             repo_type="dataset"
         )
-        print(f"Downloaded {parquet_file} to: {local_path}", flush=True)
+        print(f"Downloaded {parquet_file} to {local_path}", flush=True)
         df_existing = pd.read_parquet(local_path)
         print(f"Loaded {len(df_existing)} existing records.", flush=True)
     except Exception:
@@ -236,14 +235,13 @@ def main():
     print(f"Saved updated dataset to {parquet_file}", flush=True)
 
     login(token=token)
-    api = HfApi()
     upload_file(
         path_or_fileobj=parquet_file,
         path_in_repo=parquet_file,
         repo_id=repo_id,
         repo_type="dataset"
     )
-    print("Parquet file updated successfully!", flush=True)
+    print("Phishing records updated successfully!", flush=True)
 
 if __name__ == "__main__":
     try:
