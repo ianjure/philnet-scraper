@@ -207,6 +207,7 @@ async def fetch_legit(count):
     print(f"Filtered to {len(legit_df)} valid legit records.", flush=True)
 
     # Step 5: Extract features
+    legit_df = legit_df.head(count)
     legit_df = legit_df[['url', 'html_content']]
     features_df = legit_df.apply(
         lambda row: pd.Series(extract_features(row['url'], row['html_content'])[1]),
@@ -253,3 +254,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
