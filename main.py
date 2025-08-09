@@ -66,7 +66,7 @@ def main():
         sys.exit(0)
 
     # Fetch HTML content
-    html_contents = [fetch_html(url) for url in phish_df['url']]
+    html_contents = [await fetch_html(url) for url in phish_df['url']]
     phish_df['html_content'] = html_contents
     phish_df['html_length'] = phish_df['html_content'].str.len().fillna(0).astype(int)
     phish_df['fetch_status'] = phish_df['html_content'].apply(lambda x: "success" if x else "failed")
@@ -132,5 +132,6 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"Unhandled error: {e}", flush=True)
+
 
 
