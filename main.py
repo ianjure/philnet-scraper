@@ -22,8 +22,7 @@ token = os.getenv("HUGGINGFACE_TOKEN")
 
 # Main function to fetch data
 def main():
-    # Fetch JSON data
-    for attempt in range(max_retries):
+    for attempt in range(max_retries): # Fetch JSON data
         try:
             print(f"Attempt {attempt + 1} of {max_retries} to fetch data...", flush=True)
             headers = {
@@ -133,4 +132,5 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"Unhandled error: {e}", flush=True)
+
 
