@@ -1,6 +1,8 @@
-requests
-pandas
+httpx
 beautifulsoup4
 lxml
+tldextract
+
 pyarrow
+pandas
 huggingface-hub
