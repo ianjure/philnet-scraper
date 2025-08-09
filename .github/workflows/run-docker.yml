@@ -1,4 +1,4 @@
-name: PhiLNet - Phishing Scraper
+name: PhiLNet - Phishing and Legitimate Scraper
 
 on:
   workflow_dispatch: # Manual trigger
