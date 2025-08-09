@@ -3,6 +3,7 @@ beautifulsoup4
 lxml
 tldextract
 
+tranco
 pyarrow
 pandas
 huggingface-hub
