@@ -1,30 +1,36 @@
 import os
 import sys
 import time
+import asyncio
+import traceback
+from datetime import datetime
+from urllib.parse import urlparse
+
+import pandas as pd
+import requests
+from huggingface_hub import hf_hub_download, login, upload_file
+from tranco import Tranco
 
 from utils import fetch_html, extract_features
 
-import traceback
-import pandas as pd
-from datetime import datetime
 
-from huggingface_hub import hf_hub_download, login, upload_file
-
-# Initialize data fetching configuration variables
+# Config
 JSON_URL = "http://data.phishtank.com/data/online-valid.json"
-max_retries = 5
-retry_delay = 600
+MAX_RETRIES = 5
+RETRY_DELAY = 600
 
-# Initialize Hugging Face repository variables
-repo_id = "ianjure/philnet"
-parquet_file = "phish.parquet"
-token = os.getenv("HUGGINGFACE_TOKEN")
+REPO_ID = "ianjure/philnet"
+PHISH_FILE = "phish.parquet"
+LEGIT_FILE = "legit.parquet"
+TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
-# Main function to fetch data
-def main():
-    for attempt in range(max_retries): # Fetch JSON data
+
+# Fetch phishing data
+async def fetch_phish():
+    # Step 1: Fetch JSON from PhishTank
+    for attempt in range(MAX_RETRIES):
         try:
-            print(f"Attempt {attempt + 1} of {max_retries} to fetch data...", flush=True)
+            print(f"Attempt {attempt + 1}/{MAX_RETRIES} to fetch data...", flush=True)
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -35,44 +41,41 @@ def main():
             response = requests.get(JSON_URL, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
-            print("Successfully fetched JSON.", flush=True)
             break
         except Exception as e:
-            print(f"Error fetching data (attempt {attempt + 1}): {e}", flush=True)
+            print(f"Error fetching data: {e}", flush=True)
             traceback.print_exc()
-            if attempt < max_retries - 1:
-                print(f"Waiting {retry_delay} seconds before retry...", flush=True)
-                time.sleep(retry_delay)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY)
             else:
-                print("Max retries reached. Exiting.", flush=True)
                 sys.exit(1)
 
-    # Convert to DataFrame
     phish_df = pd.DataFrame(data)
     if phish_df.empty:
-        print("JSON fetched, but no phishing data returned.", flush=True)
+        print("No phishing data found.", flush=True)
         sys.exit(0)
 
-    # Filter today's verified phishing sites
-    today_date = datetime.utcnow().strftime('%Y-%m-%d')
+    # Step 2: Filter today's verified phishing sites
+    today = datetime.utcnow().strftime('%Y-%m-%d')
     phish_df['verification_date'] = phish_df['verification_time'].astype(str).str.split('T').str[0]
     phish_df = phish_df[
-        (phish_df['verification_date'] == today_date) &
+        (phish_df['verification_date'] == today) &
         (phish_df['verified'] == "yes") &
         (phish_df['online'] == "yes")
     ][['url', 'verification_time', 'target']].reset_index(drop=True)
+
     if phish_df.empty:
-        print("DataFrame filtered, but no phishing data returned.", flush=True)
+        print("No verified phishing data for today.", flush=True)
         sys.exit(0)
 
-    # Fetch HTML content
-    html_contents = [await fetch_html(url) for url in phish_df['url']]
+    # Step 3: Fetch HTML content
+    html_contents = await asyncio.gather(*(fetch_html(url) for url in phish_df['url']))
     phish_df['html_content'] = html_contents
     phish_df['html_length'] = phish_df['html_content'].str.len().fillna(0).astype(int)
     phish_df['fetch_status'] = phish_df['html_content'].apply(lambda x: "success" if x else "failed")
-    phish_df['fetch_date'] = datetime.utcnow().strftime('%Y-%m-%d')
+    phish_df['fetch_date'] = today
 
-    # Filter out invalid sites
+    # Step 4: Filter valid HTML
     phish_df = phish_df[
         (phish_df['fetch_status'] == "success") &
         (phish_df['html_content'] != "<html><head></head><body></body></html>") &
@@ -80,58 +83,173 @@ def main():
     ]
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
-    # Extract the features
+    # Step 5: Extract features
     phish_df = phish_df[['url', 'html_content']]
-    phish_df['visible_text'] = phish_df['html_content'].apply(extract_texts)
-    heuristic_features = phish_df.apply(extract_heuristics, axis=1)
-    phish_df = pd.concat([phish_df, heuristic_features], axis=1)
+    features_df = phish_df.apply(
+        lambda row: pd.Series(extract_features(row['url'], row['html_content'])[1]),
+        axis=1
+    )
+    phish_df['visible_text'] = phish_df.apply(
+        lambda row: extract_features(row['url'], row['html_content'])[0],
+        axis=1
+    )
+    phish_df = pd.concat([phish_df, features_df], axis=1)
 
-    # Save as parquet file
-    phish_df['result'] = 1
-    phish_df = phish_df.drop(columns="html_content")
-    
+    # Step 6: Save locally and upload
+    phish_df['result'] = 1 # Label for phish
+    phish_df.drop(columns="html_content", inplace=True)
     for col in phish_df.select_dtypes(include=['object', 'string']):
         phish_df[col] = phish_df[col].astype(str).str.encode('utf-8', 'ignore').str.decode('utf-8')
 
     output_file = "new_phish.parquet"
     phish_df.to_parquet(output_file, engine="pyarrow", index=False)
-    print(f"Saved {len(phish_df)} phishing records to {output_file}.")
 
-    # Save to database
     try:
-        local_path = hf_hub_download(
-            repo_id=repo_id,
-            filename=parquet_file,
-            repo_type="dataset"
-        )
-        print(f"Downloaded {parquet_file} to {local_path}", flush=True)
+        local_path = hf_hub_download(repo_id=REPO_ID, filename=PHISH_FILE, repo_type="dataset")
         df_existing = pd.read_parquet(local_path)
-        print(f"Loaded {len(df_existing)} existing records.", flush=True)
     except Exception:
-        print("No existing Parquet found. Creating a new one.", flush=True)
         df_existing = pd.DataFrame()
-        
-    df_combined = pd.concat([df_existing, phish_df], ignore_index=True)
-    df_combined.drop_duplicates(inplace=True)
-    print(f"Combined total records: {len(df_combined)}", flush=True)
 
-    df_combined.to_parquet(parquet_file, engine="pyarrow", index=False)
-    print(f"Saved updated dataset to {parquet_file}", flush=True)
+    df_combined = pd.concat([df_existing, phish_df], ignore_index=True).drop_duplicates()
+    df_combined.to_parquet(PHISH_FILE, engine="pyarrow", index=False)
 
-    login(token=token)
+    login(token=TOKEN)
     upload_file(
-        path_or_fileobj=parquet_file,
-        path_in_repo=parquet_file,
-        repo_id=repo_id,
+        path_or_fileobj=PHISH_FILE,
+        path_in_repo=PHISH_FILE,
+        repo_id=REPO_ID,
         repo_type="dataset"
     )
-    print("Phishing records updated successfully!", flush=True)
+    print("Phishing dataset updated successfully!", flush=True)
+
+    return len(phish_df)
+
+
+# Fetch legitimate data
+async def fetch_legit(count):
+    def normalize_domain(domain: str) -> str:
+        return domain.lower()[4:] if domain.lower().startswith("www.") else domain.lower()
+
+    def get_root_domain(url: str) -> str:
+        try:
+            domain = urlparse(url).netloc.lower()
+            return domain[4:] if domain.startswith("www.") else domain
+        except Exception:
+            return ""
+
+    # Step 1: Load Tranco
+    t = Tranco(cache=True)
+    tranco_domains = t.list().top(1_000_000)
+    df_tranco = pd.DataFrame(tranco_domains, columns=["domain"])
+    df_tranco["domain"] = df_tranco["domain"].apply(normalize_domain)
+
+    # Step 2: Remove already existing domains
+    df_dataset = pd.read_csv("dataset_full.csv")
+    df_dataset["root_domain"] = df_dataset["url"].apply(get_root_domain)
+    existing_domains = set(df_dataset["root_domain"].dropna().unique())
+    df_filtered = df_tranco[~df_tranco["domain"].isin(existing_domains)].drop_duplicates()
+
+    async def try_protocols(domain):
+        """
+        Try fetching HTML over HTTPS and HTTP in parallel.
+        Return (working_url, html_content) or (None, None) if both fail.
+        """
+        async def try_fetch(url):
+            html = await fetch_html(url)
+            return (url, html) if html else (None, None)
+    
+        https_task = asyncio.create_task(try_fetch(f"https://{domain}"))
+        http_task = asyncio.create_task(try_fetch(f"http://{domain}"))
+    
+        done, pending = await asyncio.wait(
+            {https_task, http_task},
+            return_when=asyncio.FIRST_COMPLETED
+        )
+    
+        # Cancel the slower one
+        for task in pending:
+            task.cancel()
+    
+        # Get result from the first finished task
+        for task in done:
+            url, html = await task
+            if url and html:
+                return url, html
+    
+        # If the first completed failed, check if the other one succeeded
+        for task in pending:
+            try:
+                url, html = await task
+                if url and html:
+                    return url, html
+            except asyncio.CancelledError:
+                pass
+    
+        return None, None
+
+    # Step 3: Oversample from Tranco
+    oversample_factor = 3
+    legit_df = df_filtered.head(count * oversample_factor).copy()
+    
+    # Step 4: Fetch in parallel for all domains
+    results = await asyncio.gather(*(try_protocols(domain) for domain in legit_df["domain"]))
+    legit_df["url"] = [u for u, _ in results]
+    legit_df["html_content"] = [h for _, h in results]
+    legit_df["html_length"] = legit_df["html_content"].str.len().fillna(0).astype(int)
+    legit_df["fetch_status"] = legit_df["html_content"].apply(lambda x: "success" if x else "failed")
+    legit_df["fetch_date"] = datetime.utcnow().strftime('%Y-%m-%d')
+
+    legit_df = legit_df[
+        (legit_df['fetch_status'] == "success") &
+        (legit_df['html_content'] != "<html><head></head><body></body></html>") &
+        (legit_df['html_length'] > 6000)
+    ]
+    print(f"Filtered to {len(legit_df)} valid legit records.", flush=True)
+
+    # Step 5: Extract features
+    legit_df = legit_df[['url', 'html_content']]
+    features_df = legit_df.apply(
+        lambda row: pd.Series(extract_features(row['url'], row['html_content'])[1]),
+        axis=1
+    )
+    legit_df['visible_text'] = legit_df.apply(
+        lambda row: extract_features(row['url'], row['html_content'])[0],
+        axis=1
+    )
+    legit_df = pd.concat([legit_df, features_df], axis=1)
+
+    # Step 6: Save locally and upload
+    legit_df["result"] = 0  # Label for legit
+    legit_df.drop(columns="html_content", inplace=True)
+
+    for col in legit_df.select_dtypes(include=['object', 'string']):
+        legit_df[col] = legit_df[col].astype(str).str.encode('utf-8', 'ignore').str.decode('utf-8')
+    
+    output_file = "new_legit.parquet"
+    legit_df.to_parquet(output_file, engine="pyarrow", index=False)
+    
+    try:
+        local_path = hf_hub_download(repo_id=REPO_ID, filename=LEGIT_FILE, repo_type="dataset")
+        df_existing = pd.read_parquet(local_path)
+    except Exception:
+        df_existing = pd.DataFrame()
+
+    df_combined = pd.concat([df_existing, legit_df], ignore_index=True).drop_duplicates()
+    df_combined.to_parquet(LEGIT_FILE, engine="pyarrow", index=False)
+    
+    login(token=TOKEN)
+    upload_file(
+        path_or_fileobj=LEGIT_FILE,
+        path_in_repo=LEGIT_FILE,
+        repo_id=REPO_ID,
+        repo_type="dataset"
+    )
+    print("Legit dataset updated successfully!", flush=True)
+
+# Main runner
+async def main():
+    phish_count = await fetch_phish()
+    await fetch_legit(phish_count)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"Unhandled error: {e}", flush=True)
-
-
-
+    asyncio.run(main())
