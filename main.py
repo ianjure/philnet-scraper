@@ -84,16 +84,15 @@ async def fetch_phish():
     print(f"Filtered to {len(phish_df)} valid phishing records.", flush=True)
 
     # Step 5: Extract features
-    phish_df = phish_df[['url', 'html_content']]
-    features_df = phish_df.apply(
-        lambda row: pd.Series(extract_features(row['url'], row['html_content'])[1]),
+    extracted = phish_df.apply(
+        lambda row: extract_features(row['url'], row['html_content']),
         axis=1
     )
-    phish_df['visible_text'] = phish_df.apply(
-        lambda row: extract_features(row['url'], row['html_content'])[0],
-        axis=1
-    )
-    phish_df = pd.concat([phish_df, features_df], axis=1)
+
+    phish_df['visible_text'] = [item[0] for item in extracted]
+    features_df = pd.DataFrame([item[1] for item in extracted], index=phish_df.index)
+
+    phish_df = pd.concat([phish_df.drop(columns=['html_content']), features_df], axis=1)
 
     # Step 6: Save locally and upload
     phish_df['result'] = 1 # Label for phish
@@ -207,17 +206,15 @@ async def fetch_legit(count):
     print(f"Filtered to {len(legit_df)} valid legit records.", flush=True)
 
     # Step 5: Extract features
-    legit_df = legit_df.head(count)
-    legit_df = legit_df[['url', 'html_content']]
-    features_df = legit_df.apply(
-        lambda row: pd.Series(extract_features(row['url'], row['html_content'])[1]),
+    extracted = legit_df.apply(
+        lambda row: extract_features(row['url'], row['html_content']),
         axis=1
     )
-    legit_df['visible_text'] = legit_df.apply(
-        lambda row: extract_features(row['url'], row['html_content'])[0],
-        axis=1
-    )
-    legit_df = pd.concat([legit_df, features_df], axis=1)
+
+    legit_df['visible_text'] = [item[0] for item in extracted]
+    features_df = pd.DataFrame([item[1] for item in extracted], index=legit_df.index)
+
+    legit_df = pd.concat([legit_df.drop(columns=['html_content']), features_df], axis=1)
 
     # Step 6: Save locally and upload
     legit_df["result"] = 0  # Label for legit
@@ -254,4 +251,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
